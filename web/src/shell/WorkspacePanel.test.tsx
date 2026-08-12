@@ -81,8 +81,8 @@ function renderWorkspace(
         permissionLevel={null}
         filesPanelSort={"recent" as ChangedSort}
         onSortChange={vi.fn()}
-        filesPanelFlatView={false}
-        onFlatViewChange={vi.fn()}
+        filesPanelMode="files"
+        onModeChange={vi.fn()}
         filesPanelShowHidden={false}
         onShowHiddenChange={vi.fn()}
       />

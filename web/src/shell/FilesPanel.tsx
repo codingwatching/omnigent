@@ -35,10 +35,12 @@ import { type ChangedSort, FlatFileList } from "./FlatFileList";
 import { FolderTree } from "./FolderTree";
 import { useScrollRestore } from "./useScrollRestore";
 
+export type FilesPanelMode = "files" | "changes";
+
 interface FilesPanelProps {
   onFileSelect: (path: string) => void;
-  flatView: boolean;
-  onFlatViewChange: (flatView: boolean) => void;
+  mode: FilesPanelMode;
+  onModeChange: (mode: FilesPanelMode) => void;
   /**
    * Whether hidden files (dot-prefixed paths) are visible. Lifted to
    * the parent so the state survives inline→drawer transitions.
@@ -168,16 +170,16 @@ function SortSelector({
 // Leading cell in the search toolbar. Rounded-full pills match the rail tabs;
 // the active scope uses the same theme selection surface as the sidebar.
 function FileScopeSwitch({
-  flatView,
+  mode,
   onChange,
   count,
 }: {
-  flatView: boolean;
-  onChange: (flatView: boolean) => void;
+  mode: FilesPanelMode;
+  onChange: (mode: FilesPanelMode) => void;
   count: number;
 }) {
-  const changedSelected = flatView;
-  const allSelected = !flatView;
+  const changedSelected = mode === "changes";
+  const allSelected = mode === "files";
   const pill =
     "flex cursor-pointer items-center gap-[6px] rounded-full px-[14px] py-[2px] text-[13px] font-medium leading-5 transition-colors";
   const activePill = "bg-muted text-foreground";
@@ -190,7 +192,7 @@ function FileScopeSwitch({
         aria-checked={changedSelected}
         aria-label="Changed"
         title="Show changed files only"
-        onClick={() => onChange(true)}
+        onClick={() => onChange("changes")}
         className={cn(pill, changedSelected ? activePill : idlePill)}
       >
         <ListIcon className="size-3.5 shrink-0" />
@@ -207,7 +209,7 @@ function FileScopeSwitch({
         aria-checked={allSelected}
         aria-label="All"
         title="Show the full folder tree"
-        onClick={() => onChange(false)}
+        onClick={() => onChange("files")}
         className={cn(pill, allSelected ? activePill : idlePill)}
       >
         <FolderTreeIcon className="size-3.5 shrink-0" />
@@ -264,8 +266,8 @@ function SearchFilterInput({
  */
 export function FilesPanel({
   onFileSelect,
-  flatView,
-  onFlatViewChange,
+  mode,
+  onModeChange,
   showHidden,
   onShowHiddenChange,
   sort: changedSort,
@@ -273,6 +275,7 @@ export function FilesPanel({
   onClose,
   frameless,
 }: FilesPanelProps) {
+  const flatView = mode === "changes";
   const { conversationId } = useParams<{ conversationId: string }>();
   // The runner went offline (e.g. its host restarted): `sessionStatus`
   // is "failed", set by `_on_runner_disconnect` server-side when the
@@ -432,7 +435,7 @@ export function FilesPanel({
           className="shrink-0 flex items-center gap-2 px-2 py-1.5 @max-[400px]/filespanel:flex-col @max-[400px]/filespanel:items-stretch"
           onClick={(e) => e.stopPropagation()}
         >
-          <FileScopeSwitch flatView={flatView} onChange={onFlatViewChange} count={changedCount} />
+          <FileScopeSwitch mode={mode} onChange={onModeChange} count={changedCount} />
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-[6px] rounded-full border border-border px-[10px] py-[4px] transition-colors focus-within:border-border-strong">
               <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -452,7 +455,7 @@ export function FilesPanel({
       {!flatView && (
         <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-2 px-2 py-1.5 @max-[400px]/filespanel:flex-col @max-[400px]/filespanel:items-stretch">
-            <FileScopeSwitch flatView={flatView} onChange={onFlatViewChange} count={changedCount} />
+            <FileScopeSwitch mode={mode} onChange={onModeChange} count={changedCount} />
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-[6px] rounded-full border border-border px-[10px] py-[4px] transition-colors focus-within:border-border-strong">
                 <SearchIcon className="size-4 shrink-0 text-muted-foreground" />

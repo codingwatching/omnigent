@@ -70,6 +70,7 @@ import { ExecutionLogsPanel } from "./ExecutionLogsPanel";
 import { FileViewer } from "./FileViewer";
 import { FileViewerContext } from "./FileViewerContext";
 import { FilesPanelDrawer } from "./FilesPanelDrawer";
+import type { FilesPanelMode } from "./FilesPanel";
 import type { ChangedSort } from "./FlatFileList";
 import { MobilePanelDrawer } from "./MobilePanelDrawer";
 import { isMobileViewport, Sidebar } from "./Sidebar";
@@ -214,10 +215,10 @@ export function AppShell() {
   // default each switch. The lazy useState initializer reads localStorage
   // exactly once; the ref seeds from that initial value (useRef ignores its
   // argument after mount), so we don't re-read storage on every render.
-  const [filesPanelFlatView, setFilesPanelFlatView] = useState(
-    () => readFilesPanelPreferences().changedOnly,
+  const [filesPanelMode, setFilesPanelMode] = useState<FilesPanelMode>(
+    () => (readFilesPanelPreferences().changedOnly ? "changes" : "files"),
   );
-  const filesPanelScopePrefRef = useRef(filesPanelFlatView);
+  const filesPanelScopePrefRef = useRef(filesPanelMode);
   // Tracks which conversation the current rail tab / open-files state belongs
   // to, so the persist effect targets the right session even before a switch's
   // restore has re-rendered. Set by the conversation-restore effect.
@@ -729,15 +730,15 @@ export function AppShell() {
     // the first *available* tab — forcing "files" here would shadow it.
     let nextTab: RightRailTab | null = null;
     if (viewParam === "changed") {
-      setFilesPanelFlatView(true);
+      setFilesPanelMode("changes");
       nextTab = "files";
     } else if (viewParam === "explore") {
-      setFilesPanelFlatView(false);
+      setFilesPanelMode("files");
       nextTab = "files";
     } else {
       // Fall back to the remembered choice from the in-memory ref (not a
       // fresh localStorage read) so a swallowed write can't reset the scope.
-      setFilesPanelFlatView(filesPanelScopePrefRef.current);
+      setFilesPanelMode(filesPanelScopePrefRef.current);
       nextTab = persisted.rightRailTab ?? null;
     }
 
@@ -801,7 +802,7 @@ export function AppShell() {
     // a no-op write replays this effect's stale params over whatever another
     // same-commit effect just wrote (e.g. the one-shot ?sidebar=open strip).
     const current = new URLSearchParams(window.location.search);
-    const wantChanged = rightPanelOpen && filesPanelFlatView;
+    const wantChanged = rightPanelOpen && filesPanelMode === "changes";
     if (wantChanged ? current.get("view") === "changed" : !current.has("view")) return;
     setSearchParams(
       (prev) => {
@@ -815,16 +816,16 @@ export function AppShell() {
       },
       { replace: true },
     );
-  }, [filesPanelFlatView, rightPanelOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filesPanelMode, rightPanelOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Manual scope changes (the Changed | All toggle) persist the choice so it
   // sticks across session switches and page refreshes. Update the in-memory
   // ref too (the conversation-switch fallback), so the choice survives even if
   // the localStorage write is swallowed.
-  const handleFilesFlatViewChange = useCallback((v: boolean) => {
-    filesPanelScopePrefRef.current = v;
-    setFilesPanelFlatView(v);
-    writeFilesPanelPreferences({ ...readFilesPanelPreferences(), changedOnly: v });
+  const handleFilesModeChange = useCallback((mode: FilesPanelMode) => {
+    filesPanelScopePrefRef.current = mode;
+    setFilesPanelMode(mode);
+    writeFilesPanelPreferences({ ...readFilesPanelPreferences(), changedOnly: mode === "changes" });
   }, []);
 
   const handleFilesSortChange = useCallback((s: ChangedSort) => {
@@ -1376,8 +1377,8 @@ export function AppShell() {
                     permissionLevel={permissionLevel}
                     filesPanelSort={filesPanelSort}
                     onSortChange={handleFilesSortChange}
-                    filesPanelFlatView={filesPanelFlatView}
-                    onFlatViewChange={handleFilesFlatViewChange}
+                    filesPanelMode={filesPanelMode}
+                    onModeChange={handleFilesModeChange}
                     filesPanelShowHidden={filesPanelShowHidden}
                     onShowHiddenChange={setFilesPanelShowHidden}
                   />
@@ -1414,8 +1415,8 @@ export function AppShell() {
                   open={filesPanelOpen}
                   onClose={() => setFilesPanelOpen(false)}
                   onFileSelect={openFileViewer}
-                  flatView={filesPanelFlatView}
-                  onFlatViewChange={handleFilesFlatViewChange}
+                  mode={filesPanelMode}
+                  onModeChange={handleFilesModeChange}
                   showHidden={filesPanelShowHidden}
                   onShowHiddenChange={setFilesPanelShowHidden}
                   sort={filesPanelSort}

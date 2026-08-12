@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { BrowserPane } from "@/components/BrowserPane/BrowserPane";
-import { FilesPanel } from "./FilesPanel";
+import { FilesPanel, type FilesPanelMode } from "./FilesPanel";
 import { FileViewer } from "./FileViewer";
 import type { ChangedSort } from "./FlatFileList";
 import { InlineTerminalsSection } from "./InlineTerminalsSection";
@@ -217,10 +217,10 @@ interface WorkspacePanelProps {
   filesPanelSort: ChangedSort;
   /** Change the changed-files sort order. */
   onSortChange: (sort: ChangedSort) => void;
-  /** Files view scope: false = full tree, true = changed-only flat list. */
-  filesPanelFlatView: boolean;
-  /** Toggle the Files view scope (persisted by AppShell). */
-  onFlatViewChange: (flat: boolean) => void;
+  /** Which panel tab is active: "files" = full tree, "changes" = changed-only flat list. */
+  filesPanelMode: FilesPanelMode;
+  /** Switch the active Files panel mode (persisted by AppShell). */
+  onModeChange: (mode: FilesPanelMode) => void;
   /** Whether the Files panel shows dotfiles/hidden entries. */
   filesPanelShowHidden: boolean;
   /** Toggle hidden-file visibility in the Files panel. */
@@ -270,8 +270,8 @@ export function WorkspacePanel({
   permissionLevel,
   filesPanelSort,
   onSortChange,
-  filesPanelFlatView,
-  onFlatViewChange,
+  filesPanelMode,
+  onModeChange,
   filesPanelShowHidden,
   onShowHiddenChange,
 }: WorkspacePanelProps) {
@@ -475,8 +475,8 @@ export function WorkspacePanel({
             <FilesPanel
               frameless
               onFileSelect={openFileViewer}
-              flatView={filesPanelFlatView}
-              onFlatViewChange={onFlatViewChange}
+              mode={filesPanelMode}
+              onModeChange={onModeChange}
               showHidden={filesPanelShowHidden}
               onShowHiddenChange={onShowHiddenChange}
               sort={filesPanelSort}

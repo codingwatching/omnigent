@@ -109,7 +109,7 @@ function searchResult(files: WorkspaceFile[] | undefined = undefined, isFetching
 
 function renderPanel({
   conversationId,
-  flatView = false,
+  mode = "files",
   showHidden = false,
   files,
   changedFiles = [],
@@ -119,7 +119,7 @@ function renderPanel({
   isSearching = false,
 }: {
   conversationId: string;
-  flatView?: boolean;
+  mode?: "files" | "changes";
   showHidden?: boolean;
   files: WorkspaceFile[];
   changedFiles?: WorkspaceChangedFile[];
@@ -143,9 +143,9 @@ function renderPanel({
             <FilesPanel
               sort="recent"
               onSortChange={vi.fn()}
-              flatView={flatView}
+              mode={mode}
               onFileSelect={vi.fn()}
-              onFlatViewChange={vi.fn()}
+              onModeChange={vi.fn()}
               showHidden={showHidden}
               onShowHiddenChange={vi.fn()}
               onClose={onClose}
@@ -238,9 +238,9 @@ describe("FilesPanel working folder header role", () => {
                 sort="recent"
                 onSortChange={vi.fn()}
                 frameless
-                flatView={false}
+                mode="files"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -268,7 +268,7 @@ describe("FilesPanel scope switch (Changed | All) visibility", () => {
   it("does not enable the root filesystem listing while showing Changed files", () => {
     renderPanel({
       conversationId: "conv_changed_only",
-      flatView: true,
+      mode: "changes",
       files: [file("src/App.tsx")],
       changedFiles: [changedFile("src/App.tsx")],
     });
@@ -287,7 +287,7 @@ describe("FilesPanel scope switch (Changed | All) visibility", () => {
   it("enables the root filesystem listing while showing All files", () => {
     renderPanel({
       conversationId: "conv_all_files",
-      flatView: false,
+      mode: "files",
       files: [file("src/App.tsx")],
       changedFiles: [changedFile("src/App.tsx")],
     });
@@ -319,9 +319,9 @@ describe("FilesPanel scope switch (Changed | All) visibility", () => {
                 sort="recent"
                 onSortChange={vi.fn()}
                 frameless
-                flatView={false}
+                mode="files"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -351,8 +351,8 @@ describe("FilesPanel scope switch (Changed | All) visibility", () => {
     expect(screen.getByRole("radio", { name: /^all$/i })).toBeInTheDocument();
   });
 
-  it("calls onFlatViewChange(true) when the Changed segment is clicked", () => {
-    const onFlatViewChange = vi.fn();
+  it("calls onModeChange('changes') when the Changed segment is clicked", () => {
+    const onModeChange = vi.fn();
     useAllFilesMock.mockReturnValue(allFilesResult([file("src/App.tsx")]));
     useChangedFilesMock.mockReturnValue(changedFilesResult([changedFile("src/App.tsx")]));
     useDirectoryMock.mockReturnValue(directoryResult());
@@ -369,9 +369,9 @@ describe("FilesPanel scope switch (Changed | All) visibility", () => {
                 sort="recent"
                 onSortChange={vi.fn()}
                 frameless
-                flatView={false}
+                mode="files"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={onFlatViewChange}
+                onModeChange={onModeChange}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -382,8 +382,7 @@ describe("FilesPanel scope switch (Changed | All) visibility", () => {
     );
 
     fireEvent.click(screen.getByRole("radio", { name: /^changed$/i }));
-    // Selecting Changed switches to the changed-files-only flat list.
-    expect(onFlatViewChange).toHaveBeenCalledWith(true);
+    expect(onModeChange).toHaveBeenCalledWith("changes");
   });
 });
 
@@ -396,7 +395,7 @@ describe("FilesPanel Changed pill", () => {
   it("shows the file count but no +/− line totals", () => {
     renderPanel({
       conversationId: "conv_pill_count",
-      flatView: true,
+      mode: "changes",
       files: [],
       changedFiles: [
         changedFile("src/a.ts", "modified", 10, 2),
@@ -428,9 +427,9 @@ describe("FilesPanel changed files search", () => {
               <FilesPanel
                 sort="recent"
                 onSortChange={vi.fn()}
-                flatView={true}
+                mode="changes"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -446,7 +445,7 @@ describe("FilesPanel changed files search", () => {
   it("filters already-loaded changed files case-insensitively", () => {
     renderPanel({
       conversationId: "conv_search_filter",
-      flatView: true,
+      mode: "changes",
       files: [file("src/components/Button.tsx"), file("docs/Guide.md")],
       changedFiles: [changedFile("src/components/Button.tsx"), changedFile("docs/Guide.md")],
     });
@@ -469,7 +468,7 @@ describe("FilesPanel changed files search", () => {
   it("clears the search query when switching from Changed to Explore view", () => {
     const { rerender } = renderPanel({
       conversationId: "conv_search_clear",
-      flatView: true,
+      mode: "changes",
       files: [file("src/App.tsx")],
       changedFiles: [changedFile("src/App.tsx")],
     });
@@ -490,9 +489,9 @@ describe("FilesPanel changed files search", () => {
               <FilesPanel
                 sort="recent"
                 onSortChange={vi.fn()}
-                flatView={false}
+                mode="files"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -512,9 +511,9 @@ describe("FilesPanel changed files search", () => {
               <FilesPanel
                 sort="recent"
                 onSortChange={vi.fn()}
-                flatView={true}
+                mode="changes"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -531,7 +530,7 @@ describe("FilesPanel changed files search", () => {
   it("matches changed files by full path, not just filename", () => {
     renderPanel({
       conversationId: "conv_search_path",
-      flatView: true,
+      mode: "changes",
       files: [file("src/components/Button.tsx"), file("docs/Guide.md")],
       changedFiles: [changedFile("src/components/Button.tsx"), changedFile("docs/Guide.md")],
     });
@@ -587,8 +586,8 @@ describe("FilesPanel changed files search", () => {
                     open={drawerOpen}
                     onClose={() => setDrawerOpen(false)}
                     onFileSelect={vi.fn()}
-                    flatView={false}
-                    onFlatViewChange={vi.fn()}
+                    mode="files"
+                    onModeChange={vi.fn()}
                     showHidden={showHidden}
                     onShowHiddenChange={setShowHidden}
                   />
@@ -600,9 +599,9 @@ describe("FilesPanel changed files search", () => {
                       <FilesPanel
                         sort="recent"
                         onSortChange={vi.fn()}
-                        flatView={false}
+                        mode="files"
                         onFileSelect={vi.fn()}
-                        onFlatViewChange={vi.fn()}
+                        onModeChange={vi.fn()}
                         showHidden={showHidden}
                         onShowHiddenChange={setShowHidden}
                       />
@@ -656,8 +655,8 @@ describe("FilesPanel changed files search", () => {
                     open={drawerOpen}
                     onClose={() => setDrawerOpen(false)}
                     onFileSelect={vi.fn()}
-                    flatView={false}
-                    onFlatViewChange={vi.fn()}
+                    mode="files"
+                    onModeChange={vi.fn()}
                     showHidden={showHidden}
                     onShowHiddenChange={setShowHidden}
                   />
@@ -669,9 +668,9 @@ describe("FilesPanel changed files search", () => {
                       <FilesPanel
                         sort="recent"
                         onSortChange={vi.fn()}
-                        flatView={false}
+                        mode="files"
                         onFileSelect={vi.fn()}
-                        onFlatViewChange={vi.fn()}
+                        onModeChange={vi.fn()}
                         showHidden={showHidden}
                         onShowHiddenChange={setShowHidden}
                       />
@@ -718,9 +717,9 @@ describe("FilesPanel changed files search", () => {
                 <FilesPanel
                   sort="recent"
                   onSortChange={vi.fn()}
-                  flatView={true}
+                  mode="changes"
                   onFileSelect={vi.fn()}
-                  onFlatViewChange={vi.fn()}
+                  onModeChange={vi.fn()}
                   showHidden={showHidden}
                   onShowHiddenChange={setShowHidden}
                 />
@@ -771,9 +770,9 @@ describe("FilesPanel tree (Explore) search", () => {
               <FilesPanel
                 sort="recent"
                 onSortChange={vi.fn()}
-                flatView={true}
+                mode="changes"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -962,9 +961,9 @@ describe("FilesPanel tree (Explore) search", () => {
               <FilesPanel
                 sort="recent"
                 onSortChange={vi.fn()}
-                flatView={true}
+                mode="changes"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -984,9 +983,9 @@ describe("FilesPanel tree (Explore) search", () => {
               <FilesPanel
                 sort="recent"
                 onSortChange={vi.fn()}
-                flatView={false}
+                mode="files"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -1192,9 +1191,9 @@ describe("FilesPanel tree (Explore) search", () => {
               <FilesPanel
                 sort="recent"
                 onSortChange={vi.fn()}
-                flatView={true}
+                mode="changes"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -1215,9 +1214,9 @@ describe("FilesPanel tree (Explore) search", () => {
               <FilesPanel
                 sort="recent"
                 onSortChange={vi.fn()}
-                flatView={false}
+                mode="files"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />
@@ -1239,7 +1238,7 @@ describe("FilesPanel sort control", () => {
     renderPanel({
       conversationId: "conv_all_sort",
       files: [file("a.txt")],
-      flatView: false,
+      mode: "files",
     });
     expect(screen.getByRole("button", { name: /^Sort:/ })).toBeInTheDocument();
   });
@@ -1309,9 +1308,9 @@ describe("FilesPanel scroll position persistence", () => {
               <FilesPanel
                 sort="recent"
                 onSortChange={vi.fn()}
-                flatView={false}
+                mode="files"
                 onFileSelect={vi.fn()}
-                onFlatViewChange={vi.fn()}
+                onModeChange={vi.fn()}
                 showHidden={false}
                 onShowHiddenChange={vi.fn()}
               />

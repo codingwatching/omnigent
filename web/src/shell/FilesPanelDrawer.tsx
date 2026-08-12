@@ -16,7 +16,7 @@ import { useEffect, useRef } from "react";
 
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { cn } from "@/lib/utils";
-import { FilesPanel } from "./FilesPanel";
+import { FilesPanel, type FilesPanelMode } from "./FilesPanel";
 import type { ChangedSort } from "./FlatFileList";
 
 interface FilesPanelDrawerProps {
@@ -32,8 +32,8 @@ interface FilesPanelDrawerProps {
    * Lifted Changed/Explore tab state. Lifted to AppShell so the
    * choice survives drawer open/close cycles.
    */
-  flatView: boolean;
-  onFlatViewChange: (flatView: boolean) => void;
+  mode: FilesPanelMode;
+  onModeChange: (mode: FilesPanelMode) => void;
   /**
    * Lifted hidden-files toggle state. Lifted to AppShell so the
    * eye-icon choice survives inline→drawer transitions.
@@ -52,8 +52,8 @@ export function FilesPanelDrawer({
   open,
   onClose,
   onFileSelect,
-  flatView,
-  onFlatViewChange,
+  mode,
+  onModeChange,
   showHidden,
   onShowHiddenChange,
   sort,
@@ -110,8 +110,8 @@ export function FilesPanelDrawer({
       {open && (
         <FilesPanel
           onFileSelect={onFileSelect}
-          flatView={flatView}
-          onFlatViewChange={onFlatViewChange}
+          mode={mode}
+          onModeChange={onModeChange}
           showHidden={showHidden}
           onShowHiddenChange={onShowHiddenChange}
           sort={sort}
