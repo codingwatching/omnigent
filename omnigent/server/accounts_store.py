@@ -46,6 +46,9 @@ from omnigent.db.enum_codecs import decode_account_token_kind, encode_account_to
 from omnigent.db.utils import get_or_create_engine, make_named_managed_session_maker
 from omnigent.entities import Account, AccountToken
 from omnigent.server.auth import RESERVED_USER_LOCAL, RESERVED_USER_PUBLIC
+from omnigent.stores.permission_store.sqlalchemy_store import (
+    invalidate_resolve_access_caches,
+)
 
 _HIDDEN_LIST_USERS = frozenset({RESERVED_USER_PUBLIC, RESERVED_USER_LOCAL})
 
@@ -202,6 +205,10 @@ class SqlAlchemyAccountStore:
                 )
                 .values(is_admin=is_admin)
             )
+        # The admin flag governs access to every session, and the permission
+        # store caches that decision. Evict after the commit so a demotion made
+        # through this store can't keep being served from the other one's cache.
+        invalidate_resolve_access_caches()
 
     def list_users(self) -> list[Account]:
         """Return all users for the admin members page.
@@ -292,7 +299,10 @@ class SqlAlchemyAccountStore:
                 )
             )
             session.delete(target)
-            return True
+        # Every grant this user held is gone; drop the permission store's cached
+        # decisions (after the commit) so the deleted user loses access at once.
+        invalidate_resolve_access_caches()
+        return True
 
     def get_password_hash(self, user_id: str) -> str | None:
         """Fetch a user's password hash for verification.
