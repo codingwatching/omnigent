@@ -6344,22 +6344,21 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
     expect(patchCallsFor("conv_p2")).toEqual([]);
   });
 
-  it("resumes sticky applies once a bind succeeds after the backoff", async () => {
-    // The cooldown must not be permanent: once the backend recovers, a
-    // successful bind clears it so stickiness resumes rather than staying dead
-    // until a page reload.
-    seedSession("conv_r1", []);
-    seedSession("conv_r3", []);
-    sessionLabels.set("conv_r1", { "omnigent.wrapper": "claude-code-native-ui" });
-    sessionLabels.set("conv_r3", { "omnigent.wrapper": "claude-code-native-ui" });
-    let broken = true;
+  it("does not reopen the cooldown when an intervening request succeeds", async () => {
+    // The gate reopens by time, not on a success — otherwise the ~10% of
+    // requests that get through mid-outage would flap it open and leak a fresh
+    // apply each time. A successful bind here must leave the cooldown armed.
+    seedSession("conv_f1", []);
+    seedSession("conv_f2", []);
+    sessionLabels.set("conv_f1", { "omnigent.wrapper": "claude-code-native-ui" });
+    sessionLabels.set("conv_f2", { "omnigent.wrapper": "claude-code-native-ui" });
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const path = (typeof input === "string" ? input : input.toString()).split("?")[0];
-      if (path === "/v1/sessions/conv_r1" && init?.method === "PATCH" && broken) {
+      if (path === "/v1/sessions/conv_f1" && init?.method === "PATCH") {
         return mockResponse({}, { ok: false, status: 500 });
       }
       if (
-        (path === "/v1/sessions/conv_r1" || path === "/v1/sessions/conv_r3") &&
+        (path === "/v1/sessions/conv_f1" || path === "/v1/sessions/conv_f2") &&
         (init?.method ?? "GET") === "GET"
       ) {
         return nativeSnapshotResponse(path.slice("/v1/sessions/".length));
@@ -6369,22 +6368,60 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
 
     useChatStore.setState({ selectedEffort: "high", selectedModel: "opus" });
 
-    // Arm the cooldown on conv_r1.
-    await useChatStore.getState().switchTo("conv_r1");
+    // Arm the cooldown.
+    await useChatStore.getState().switchTo("conv_f1");
     await flushStickyApplies();
-    expect(patchCallsFor("conv_r1").length).toBeGreaterThan(0);
+    expect(patchCallsFor("conv_f1").length).toBeGreaterThan(0);
 
-    // The backend recovers, and a brand-new send binds successfully — that
-    // success clears the cooldown.
-    broken = false;
+    // A brand-new send binds successfully (a request that got through) — but it
+    // must NOT clear the cooldown.
     await useChatStore.getState().switchTo(null);
     await useChatStore.getState().send("hi", "agent_xyz");
 
-    // A fresh native session now re-applies its sticky pref (it would stay
-    // suppressed if the cooldown were still armed).
-    await useChatStore.getState().switchTo("conv_r3");
+    // A fresh native session is still suppressed: the success didn't flap it open.
+    await useChatStore.getState().switchTo("conv_f2");
     await flushStickyApplies();
-    expect(patchCallsFor("conv_r3").length).toBeGreaterThan(0);
+    expect(patchCallsFor("conv_f2")).toEqual([]);
+  });
+
+  it("reopens the cooldown once its window elapses", async () => {
+    // Recovery is time-based: after the window the applies fire again (and stay
+    // firing while the backend is healthy).
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      seedSession("conv_e1", []);
+      seedSession("conv_e3", []);
+      sessionLabels.set("conv_e1", { "omnigent.wrapper": "claude-code-native-ui" });
+      sessionLabels.set("conv_e3", { "omnigent.wrapper": "claude-code-native-ui" });
+      fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = (typeof input === "string" ? input : input.toString()).split("?")[0];
+        if (path === "/v1/sessions/conv_e1" && init?.method === "PATCH") {
+          return mockResponse({}, { ok: false, status: 500 });
+        }
+        if (
+          (path === "/v1/sessions/conv_e1" || path === "/v1/sessions/conv_e3") &&
+          (init?.method ?? "GET") === "GET"
+        ) {
+          return nativeSnapshotResponse(path.slice("/v1/sessions/".length));
+        }
+        return defaultFetchHandler(input, init);
+      });
+
+      useChatStore.setState({ selectedEffort: "high", selectedModel: "opus" });
+
+      // Arm the cooldown at t=1s (window is 30s → reopens at t=31s).
+      await useChatStore.getState().switchTo("conv_e1");
+      await flushStickyApplies();
+      expect(patchCallsFor("conv_e1").length).toBeGreaterThan(0);
+
+      // Advance the clock past the window; a fresh session's applies fire again.
+      nowSpy.mockReturnValue(32_000);
+      await useChatStore.getState().switchTo("conv_e3");
+      await flushStickyApplies();
+      expect(patchCallsFor("conv_e3").length).toBeGreaterThan(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("lets only the newest model pick settle the persisted sticky preference", async () => {
