@@ -6311,22 +6311,20 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
     expect(patchCallsFor("conv_bo2")).toEqual([]);
   });
 
-  it("parks only the 404'd session, leaving other sessions sticky", async () => {
-    // A 404 means that session is gone — stop applying to it — but it must not
-    // suppress stickiness for healthy sessions (it is not a backend-wide outage).
-    seedSession("conv_gone", []);
-    seedSession("conv_ok", []);
-    sessionLabels.set("conv_gone", { "omnigent.wrapper": "claude-code-native-ui" });
-    sessionLabels.set("conv_ok", { "omnigent.wrapper": "claude-code-native-ui" });
+  it("treats a 404 as a transient backend failure and pauses all sticky applies", async () => {
+    // A 404 here means the permission check didn't succeed (a flaky permission
+    // service), NOT that the session is gone — so it is backend-wide and
+    // transient, and must pause every session's applies just like a 5xx rather
+    // than singling out the session that happened to 404.
+    seedSession("conv_p1", []);
+    seedSession("conv_p2", []);
+    sessionLabels.set("conv_p1", { "omnigent.wrapper": "claude-code-native-ui" });
+    sessionLabels.set("conv_p2", { "omnigent.wrapper": "claude-code-native-ui" });
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const path = (typeof input === "string" ? input : input.toString()).split("?")[0];
-      if (path === "/v1/sessions/conv_gone" && init?.method === "PATCH") {
-        return mockResponse({}, { ok: false, status: 404 });
-      }
-      if (
-        (path === "/v1/sessions/conv_gone" || path === "/v1/sessions/conv_ok") &&
-        (init?.method ?? "GET") === "GET"
-      ) {
+      const ours = path === "/v1/sessions/conv_p1" || path === "/v1/sessions/conv_p2";
+      if (ours && init?.method === "PATCH") return mockResponse({}, { ok: false, status: 404 });
+      if (ours && (init?.method ?? "GET") === "GET") {
         return nativeSnapshotResponse(path.slice("/v1/sessions/".length));
       }
       return defaultFetchHandler(input, init);
@@ -6334,35 +6332,34 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
 
     useChatStore.setState({ selectedEffort: "high", selectedModel: "opus" });
 
-    await useChatStore.getState().switchTo("conv_gone");
+    // First bind fires the sticky applies; both 404 → the cooldown arms.
+    await useChatStore.getState().switchTo("conv_p1");
     await flushStickyApplies();
-    expect(patchCallsFor("conv_gone").length).toBeGreaterThan(0);
+    expect(patchCallsFor("conv_p1").length).toBeGreaterThan(0);
 
-    // The 404 parked conv_gone but must not globally block: a healthy session
-    // still gets its sticky applies.
-    await useChatStore.getState().switchTo("conv_ok");
+    // A different session bound while the cooldown holds must NOT re-issue the
+    // silent applies — the 404 pauses everyone, not just conv_p1.
+    await useChatStore.getState().switchTo("conv_p2");
     await flushStickyApplies();
-    expect(patchCallsFor("conv_ok").length).toBeGreaterThan(0);
+    expect(patchCallsFor("conv_p2")).toEqual([]);
   });
 
-  it("lifts a 404 park on the next successful bind and re-applies stickiness", async () => {
-    // A sticky PATCH 404 is a transient mid-bind race (the snapshot GET that
-    // gates it just succeeded), so the park must not be permanent: the next
-    // bind whose snapshot succeeds proves the session exists and re-applies.
-    seedSession("conv_heal", []);
-    seedSession("conv_away", []);
-    sessionLabels.set("conv_heal", { "omnigent.wrapper": "claude-code-native-ui" });
-    sessionLabels.set("conv_away", { "omnigent.wrapper": "claude-code-native-ui" });
-    let healPatchBroken = true;
+  it("resumes sticky applies once a bind succeeds after the backoff", async () => {
+    // The cooldown must not be permanent: once the backend recovers, a
+    // successful bind clears it so stickiness resumes rather than staying dead
+    // until a page reload.
+    seedSession("conv_r1", []);
+    seedSession("conv_r3", []);
+    sessionLabels.set("conv_r1", { "omnigent.wrapper": "claude-code-native-ui" });
+    sessionLabels.set("conv_r3", { "omnigent.wrapper": "claude-code-native-ui" });
+    let broken = true;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const path = (typeof input === "string" ? input : input.toString()).split("?")[0];
-      if (path === "/v1/sessions/conv_heal" && init?.method === "PATCH") {
-        return healPatchBroken
-          ? mockResponse({}, { ok: false, status: 404 })
-          : nativeSnapshotResponse("conv_heal");
+      if (path === "/v1/sessions/conv_r1" && init?.method === "PATCH" && broken) {
+        return mockResponse({}, { ok: false, status: 500 });
       }
       if (
-        (path === "/v1/sessions/conv_heal" || path === "/v1/sessions/conv_away") &&
+        (path === "/v1/sessions/conv_r1" || path === "/v1/sessions/conv_r3") &&
         (init?.method ?? "GET") === "GET"
       ) {
         return nativeSnapshotResponse(path.slice("/v1/sessions/".length));
@@ -6372,24 +6369,22 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
 
     useChatStore.setState({ selectedEffort: "high", selectedModel: "opus" });
 
-    // Bind 1: sticky applies fire, 404 → conv_heal parked.
-    await useChatStore.getState().switchTo("conv_heal");
+    // Arm the cooldown on conv_r1.
+    await useChatStore.getState().switchTo("conv_r1");
     await flushStickyApplies();
-    const afterPark = patchCallsFor("conv_heal").length;
-    expect(afterPark).toBeGreaterThan(0);
+    expect(patchCallsFor("conv_r1").length).toBeGreaterThan(0);
 
-    // The backend recovers, and conv_heal's stream drops (the realistic outage
-    // shape) so the next visit is a fresh bind rather than a cached reuse.
-    healPatchBroken = false;
-    conversationRegistry.peek("conv_heal")!.setState({ abortController: null });
+    // The backend recovers, and a brand-new send binds successfully — that
+    // success clears the cooldown.
+    broken = false;
+    await useChatStore.getState().switchTo(null);
+    await useChatStore.getState().send("hi", "agent_xyz");
 
-    // Bind 2: the snapshot GET succeeds, so the park lifts and the sticky
-    // applies re-fire rather than staying suppressed until a page reload.
-    await useChatStore.getState().switchTo("conv_away");
+    // A fresh native session now re-applies its sticky pref (it would stay
+    // suppressed if the cooldown were still armed).
+    await useChatStore.getState().switchTo("conv_r3");
     await flushStickyApplies();
-    await useChatStore.getState().switchTo("conv_heal");
-    await flushStickyApplies();
-    expect(patchCallsFor("conv_heal").length).toBeGreaterThan(afterPark);
+    expect(patchCallsFor("conv_r3").length).toBeGreaterThan(0);
   });
 
   it("lets only the newest model pick settle the persisted sticky preference", async () => {
