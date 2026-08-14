@@ -992,14 +992,18 @@ function stickyApplyBlocked(sessionId: string): boolean {
   return stickyApplyGoneSessions.has(sessionId) || Date.now() < stickyApplyBackoffUntil;
 }
 
-// Success clears the cooldown (backend healthy); a 404 parks the gone session;
-// any other failure arms the cooldown so the next rebind waits, not re-fires.
+// Success clears the cooldown (backend healthy). A 404/410 parks just that
+// session — a sticky PATCH only runs after a successful snapshot GET, so a
+// 404/410 is a transient mid-bind race, not a backend-wide outage; parking it
+// keeps that one session from pausing the others. The park lifts on the next
+// successful bind (see bindStream). Any other failure arms the global cooldown
+// so the next rebind waits rather than re-firing.
 function noteStickyApplyResult(sessionId: string, err: unknown): void {
   if (err === undefined) {
     stickyApplyBackoffUntil = 0;
     return;
   }
-  if (err instanceof ApiError && err.status === 404) {
+  if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
     stickyApplyGoneSessions.add(sessionId);
     return;
   }
@@ -3068,6 +3072,10 @@ async function bindStream(
       fetchSessionItemsPage(id, { limit: INITIAL_WINDOW_ITEMS }),
     ]);
     if (isConversationDisposed(id)) return;
+    // The snapshot fetch just succeeded, so the session exists: lift any 404
+    // park (a prior sticky PATCH 404 was a transient mid-bind race) so the
+    // apply below can retry.
+    stickyApplyGoneSessions.delete(id);
     const items = page.items;
 
     // Sticky-pref handoff for CLI-created sessions with no override.

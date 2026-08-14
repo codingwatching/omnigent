@@ -6345,6 +6345,53 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
     expect(patchCallsFor("conv_ok").length).toBeGreaterThan(0);
   });
 
+  it("lifts a 404 park on the next successful bind and re-applies stickiness", async () => {
+    // A sticky PATCH 404 is a transient mid-bind race (the snapshot GET that
+    // gates it just succeeded), so the park must not be permanent: the next
+    // bind whose snapshot succeeds proves the session exists and re-applies.
+    seedSession("conv_heal", []);
+    seedSession("conv_away", []);
+    sessionLabels.set("conv_heal", { "omnigent.wrapper": "claude-code-native-ui" });
+    sessionLabels.set("conv_away", { "omnigent.wrapper": "claude-code-native-ui" });
+    let healPatchBroken = true;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = (typeof input === "string" ? input : input.toString()).split("?")[0];
+      if (path === "/v1/sessions/conv_heal" && init?.method === "PATCH") {
+        return healPatchBroken
+          ? mockResponse({}, { ok: false, status: 404 })
+          : nativeSnapshotResponse("conv_heal");
+      }
+      if (
+        (path === "/v1/sessions/conv_heal" || path === "/v1/sessions/conv_away") &&
+        (init?.method ?? "GET") === "GET"
+      ) {
+        return nativeSnapshotResponse(path.slice("/v1/sessions/".length));
+      }
+      return defaultFetchHandler(input, init);
+    });
+
+    useChatStore.setState({ selectedEffort: "high", selectedModel: "opus" });
+
+    // Bind 1: sticky applies fire, 404 → conv_heal parked.
+    await useChatStore.getState().switchTo("conv_heal");
+    await flushStickyApplies();
+    const afterPark = patchCallsFor("conv_heal").length;
+    expect(afterPark).toBeGreaterThan(0);
+
+    // The backend recovers, and conv_heal's stream drops (the realistic outage
+    // shape) so the next visit is a fresh bind rather than a cached reuse.
+    healPatchBroken = false;
+    conversationRegistry.peek("conv_heal")!.setState({ abortController: null });
+
+    // Bind 2: the snapshot GET succeeds, so the park lifts and the sticky
+    // applies re-fire rather than staying suppressed until a page reload.
+    await useChatStore.getState().switchTo("conv_away");
+    await flushStickyApplies();
+    await useChatStore.getState().switchTo("conv_heal");
+    await flushStickyApplies();
+    expect(patchCallsFor("conv_heal").length).toBeGreaterThan(afterPark);
+  });
+
   it("lets only the newest model pick settle the persisted sticky preference", async () => {
     // A conversation-id guard can't order two picks. If A's PATCH is slow, the
     // user switches to B and picks again, then A resolves last: A's canonical
