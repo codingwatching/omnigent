@@ -979,6 +979,33 @@ const BACKGROUND_FLUSH_COOLDOWN_MS = 5_000;
 const backgroundFlushInFlight = new Set<string>();
 const backgroundFlushCooldownUntil = new Map<string, number>();
 
+// Failure-scoped backoff for the silent sticky-apply PATCHes (effort/model): if
+// the backend errors they never persist and would re-fire on every rebind, so a
+// failure pauses them and the next success resumes. Reset in initChatStore.
+const STICKY_APPLY_BACKOFF_MS = 30_000;
+let stickyApplyBackoffUntil = 0;
+const stickyApplyGoneSessions = new Set<string>();
+
+// Skip silent sticky applies while the backend is cooling down after a failure,
+// or the session has 404'd. Explicit /model and /effort picks are never gated.
+function stickyApplyBlocked(sessionId: string): boolean {
+  return stickyApplyGoneSessions.has(sessionId) || Date.now() < stickyApplyBackoffUntil;
+}
+
+// Success clears the cooldown (backend healthy); a 404 parks the gone session;
+// any other failure arms the cooldown so the next rebind waits, not re-fires.
+function noteStickyApplyResult(sessionId: string, err: unknown): void {
+  if (err === undefined) {
+    stickyApplyBackoffUntil = 0;
+    return;
+  }
+  if (err instanceof ApiError && err.status === 404) {
+    stickyApplyGoneSessions.add(sessionId);
+    return;
+  }
+  stickyApplyBackoffUntil = Date.now() + STICKY_APPLY_BACKOFF_MS;
+}
+
 // Remembers each File's successful upload so a retry reuses the server-assigned
 // file_id instead of re-uploading the blob (which would orphan the prior one).
 // Retries re-send the same File objects — background flush re-queues them on a
@@ -1112,6 +1139,8 @@ export function initChatStore(client: QueryClient): void {
   workspaceInvalidationTimers.clear();
   backgroundFlushInFlight.clear();
   backgroundFlushCooldownUntil.clear();
+  stickyApplyBackoffUntil = 0;
+  stickyApplyGoneSessions.clear();
   // Drop every live conversation: their streams must not outlive the app (or,
   // in tests, leak into the next case).
   conversationRegistry.clear();
@@ -2687,13 +2716,23 @@ async function ensureBoundSession(
     onSessionResolved?.(sessionId);
     // Native runners read reasoning_effort during bind.
     const preBindEffort = useChatStore.getState().selectedEffort;
-    if (preBindEffort != null && supportsEffortControl(session)) {
-      await updateSession(sessionId, {
-        reasoningEffort: preBindEffort,
-        silent: true,
-      });
+    try {
+      if (preBindEffort != null && supportsEffortControl(session)) {
+        await updateSession(sessionId, {
+          reasoningEffort: preBindEffort,
+          silent: true,
+        });
+      }
+      await bindOnlyOnlineRunner(sessionId);
+      // A successful bind proves the backend is healthy — clear any sticky-apply
+      // cooldown so stickiness resumes at once rather than waiting it out.
+      noteStickyApplyResult(sessionId, undefined);
+    } catch (err) {
+      // A failing bind feeds the same backoff the silent applies use, then
+      // rethrows so send still rolls back and hands the message to the composer.
+      noteStickyApplyResult(sessionId, err);
+      throw err;
     }
-    await bindOnlyOnlineRunner(sessionId);
     const entry = conversationRegistry.acquire(sessionId);
     // The landing composer's optimistic bubble (and any status it set) was
     // buffered on the root store because no entry existed yet — hand it over
@@ -3081,21 +3120,26 @@ async function bindStream(
       !isSubAgentSession &&
       canApplyEffort &&
       session.reasoningEffort == null &&
-      stickyEffort != null
+      stickyEffort != null &&
+      !stickyApplyBlocked(id)
     ) {
-      updateSession(id, { reasoningEffort: stickyEffort }).catch((err: unknown) => {
-        console.warn(`Failed to apply sticky effort=${stickyEffort} to session ${id}:`, err);
-      });
+      updateSession(id, { reasoningEffort: stickyEffort })
+        .then(() => noteStickyApplyResult(id, undefined))
+        .catch((err: unknown) => {
+          noteStickyApplyResult(id, err);
+          console.warn(`Failed to apply sticky effort=${stickyEffort} to session ${id}:`, err);
+        });
     }
-    if (willApplyStickyModel) {
-      updateSession(id, { modelOverride: compatibleStickyModel, silent: true }).catch(
-        (err: unknown) => {
+    if (willApplyStickyModel && !stickyApplyBlocked(id)) {
+      updateSession(id, { modelOverride: compatibleStickyModel, silent: true })
+        .then(() => noteStickyApplyResult(id, undefined))
+        .catch((err: unknown) => {
+          noteStickyApplyResult(id, err);
           console.warn(
             `Failed to apply sticky model=${compatibleStickyModel} to session ${id}:`,
             err,
           );
-        },
-      );
+        });
     }
 
     const snapshotBlocks = itemsToBlocks(items);
@@ -4923,15 +4967,16 @@ async function refetchRunnerBackedSessionState(
     }
   }
   setterFor(conversationId)(statePatch);
-  if (stickyModel != null && !alreadyApplied) {
-    updateSession(conversationId, { modelOverride: stickyModel, silent: true }).catch(
-      (err: unknown) => {
+  if (stickyModel != null && !alreadyApplied && !stickyApplyBlocked(conversationId)) {
+    updateSession(conversationId, { modelOverride: stickyModel, silent: true })
+      .then(() => noteStickyApplyResult(conversationId, undefined))
+      .catch((err: unknown) => {
+        noteStickyApplyResult(conversationId, err);
         console.warn(
           `Failed to apply delayed sticky model=${stickyModel} to session ${conversationId}:`,
           err,
         );
-      },
-    );
+      });
   }
 }
 

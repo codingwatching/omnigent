@@ -6260,6 +6260,91 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
     expect(state.selectedEffort).toBe("high");
   });
 
+  // Flush the fire-and-forget sticky-apply promise chain (fetch → parse →
+  // reject → catch → arm/clear the backoff) before the next assertion.
+  const flushStickyApplies = () =>
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+  const nativeSnapshotResponse = (id: string): Response =>
+    mockResponse({
+      id,
+      agent_id: "agent_xyz",
+      status: "idle",
+      created_at: 0,
+      items: [],
+      labels: { "omnigent.wrapper": "claude-code-native-ui" },
+      reasoning_effort: null,
+      model_override: null,
+      model_options: CLAUDE_MODEL_OPTIONS,
+    });
+
+  it("stops re-firing sticky applies after a 5xx until the backoff clears", async () => {
+    // Backend outage: every sticky-apply PATCH 500s. Without a client backoff
+    // these re-fire on every bind/switch and pile onto the failing server.
+    seedSession("conv_bo1", []);
+    seedSession("conv_bo2", []);
+    sessionLabels.set("conv_bo1", { "omnigent.wrapper": "claude-code-native-ui" });
+    sessionLabels.set("conv_bo2", { "omnigent.wrapper": "claude-code-native-ui" });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = (typeof input === "string" ? input : input.toString()).split("?")[0];
+      const ours = path === "/v1/sessions/conv_bo1" || path === "/v1/sessions/conv_bo2";
+      if (ours && init?.method === "PATCH") return mockResponse({}, { ok: false, status: 500 });
+      if (ours && (init?.method ?? "GET") === "GET") {
+        return nativeSnapshotResponse(path.slice("/v1/sessions/".length));
+      }
+      return defaultFetchHandler(input, init);
+    });
+
+    useChatStore.setState({ selectedEffort: "high", selectedModel: "opus" });
+
+    // First bind fires the sticky applies; both 500 → the cooldown arms.
+    await useChatStore.getState().switchTo("conv_bo1");
+    await flushStickyApplies();
+    expect(patchCallsFor("conv_bo1").length).toBeGreaterThan(0);
+
+    // A second bind (different session) while the backend-wide cooldown holds
+    // must NOT re-issue the silent applies.
+    await useChatStore.getState().switchTo("conv_bo2");
+    await flushStickyApplies();
+    expect(patchCallsFor("conv_bo2")).toEqual([]);
+  });
+
+  it("parks only the 404'd session, leaving other sessions sticky", async () => {
+    // A 404 means that session is gone — stop applying to it — but it must not
+    // suppress stickiness for healthy sessions (it is not a backend-wide outage).
+    seedSession("conv_gone", []);
+    seedSession("conv_ok", []);
+    sessionLabels.set("conv_gone", { "omnigent.wrapper": "claude-code-native-ui" });
+    sessionLabels.set("conv_ok", { "omnigent.wrapper": "claude-code-native-ui" });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = (typeof input === "string" ? input : input.toString()).split("?")[0];
+      if (path === "/v1/sessions/conv_gone" && init?.method === "PATCH") {
+        return mockResponse({}, { ok: false, status: 404 });
+      }
+      if (
+        (path === "/v1/sessions/conv_gone" || path === "/v1/sessions/conv_ok") &&
+        (init?.method ?? "GET") === "GET"
+      ) {
+        return nativeSnapshotResponse(path.slice("/v1/sessions/".length));
+      }
+      return defaultFetchHandler(input, init);
+    });
+
+    useChatStore.setState({ selectedEffort: "high", selectedModel: "opus" });
+
+    await useChatStore.getState().switchTo("conv_gone");
+    await flushStickyApplies();
+    expect(patchCallsFor("conv_gone").length).toBeGreaterThan(0);
+
+    // The 404 parked conv_gone but must not globally block: a healthy session
+    // still gets its sticky applies.
+    await useChatStore.getState().switchTo("conv_ok");
+    await flushStickyApplies();
+    expect(patchCallsFor("conv_ok").length).toBeGreaterThan(0);
+  });
+
   it("lets only the newest model pick settle the persisted sticky preference", async () => {
     // A conversation-id guard can't order two picks. If A's PATCH is slow, the
     // user switches to B and picks again, then A resolves last: A's canonical
