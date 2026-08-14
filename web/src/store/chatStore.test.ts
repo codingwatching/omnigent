@@ -6309,6 +6309,9 @@ describe("chatStore — bindStream sticky-pref handoff", () => {
     await useChatStore.getState().switchTo("conv_bo2");
     await flushStickyApplies();
     expect(patchCallsFor("conv_bo2")).toEqual([]);
+    // ...and must NOT claim the sticky model as an override the skipped PATCH
+    // never persisted — the /model readout stays honest during the cooldown.
+    expect(conversationRegistry.peek("conv_bo2")!.getState().sessionModelOverride).toBeNull();
   });
 
   it("treats a 404 as a transient backend failure and pauses all sticky applies", async () => {

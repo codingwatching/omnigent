@@ -3096,7 +3096,11 @@ async function bindStream(
       !routingOn &&
       nativeModelFamily !== null &&
       session.modelOverride == null &&
-      compatibleStickyModel != null;
+      compatibleStickyModel != null &&
+      // While cooling down we skip the PATCH, so don't let the /model readout
+      // claim an override the server won't have — effectiveSessionOverride stays
+      // null, matching the un-persisted server truth.
+      !stickyApplyBlocked();
     const effectiveSessionOverride =
       session.modelOverride ?? (willApplyStickyModel ? compatibleStickyModel : null);
     if (
@@ -3111,7 +3115,7 @@ async function bindStream(
         console.warn(`Failed to apply sticky effort=${stickyEffort} to session ${id}:`, err);
       });
     }
-    if (willApplyStickyModel && !stickyApplyBlocked()) {
+    if (willApplyStickyModel) {
       updateSession(id, { modelOverride: compatibleStickyModel, silent: true }).catch(
         (err: unknown) => {
           armStickyApplyBackoff();
